@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+import requests
+import xml.etree.ElementTree as ET
+from datetime import datetime
+import os
+import json
+import termios
+import tty
+import select
+import sys
+import re
+
+def get_key():
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(sys.stdin.fileno())
+        if select.select([sys.stdin], [], [], 0.1)[0]:
+            ch = sys.stdin.read(1)
+        else:
+            ch = None
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    return ch
+
+def get_currency_data():
+    try:
+        dollar_response = requests.get("https://economia.awesomeapi.com.br/last/USD-BRL")
+        dollar_data = json.loads(dollar_response.text)
+        dollar_rate = float(dollar_data["USDBRL"]["bid"])
+        
+        btc_response = requests.get("https://api.coinbase.com/v2/prices/BTC-USD/spot")
+        btc_data = json.loads(btc_response.text)
+        btc_price = float(btc_data["data"]["amount"])
+        
+        return dollar_rate, btc_price
+    except Exception as e:
+        return None, None
+
+def display_news(news_items, dollar_rate=None, btc_price=None):
+    os.system("clear")
+    print("\033[1m=== UOL Latest News ===\033[0m")
+    
+    if dollar_rate and btc_price:
+        print(f"\033[32mUSD: R$ {dollar_rate:.2f} | BTC: $ {btc_price:,.2f}\033[0m")
+    print(f"Updated: {datetime.now().strftime('%H:%M:%S')}")
+    print(f"\033[33mPress r to refresh, q to quit\033[0m\n")
+    
+    for i, (title, pubDate) in enumerate(news_items[:10], 1):
+        print(f"\033[36m{i:2d}. {title.strip()}\033[0m")
+        if pubDate:
+            print(f"\033[90m    {pubDate}\033[0m")
+
+def get_uol_news():
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/rss+xml, application/xml"
+        }
+        
+        dollar_rate, btc_price = get_currency_data()
+        response = requests.get("https://rss.home.uol.com.br/index.xml", headers=headers)
+        root = ET.fromstring(response.content)
+        
+        news_items = []
+        for item in root.findall(".//item"):
+            title = item.find("title")
+            pubDate = item.find("pubDate")
+            
+            if title is not None and title.text:
+                news_title = title.text.strip()
+                pub_date = ""
+                
+                if pubDate is not None and pubDate.text:
+                    try:
+                        date_obj = datetime.strptime(pubDate.text.strip(), "%a, %d %b %Y %H:%M:%S %z")
+                        pub_date = date_obj.strftime("%d/%m/%Y %H:%M")
+                    except:
+                        pub_date = pubDate.text.strip()
+                
+                news_items.append((news_title, pub_date))
+        
+        while True:
+            display_news(news_items, dollar_rate, btc_price)
+            key = get_key()
+            if key == "q":
+                sys.exit(0)
+            elif key == "r":
+                return get_uol_news()
+
+    except Exception as e:
+        print(f"\033[31mError: {str(e)}\033[0m")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    get_uol_news()
